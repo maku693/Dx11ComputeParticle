@@ -17,11 +17,11 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
   void Uninitialize() {}
 
   void Run() {
-    CoreWindow window = CoreWindow::GetForCurrentThread();
-    window.Activate();
-
-    CoreDispatcher dispatcher = window.Dispatcher();
-    dispatcher.ProcessEvents(CoreProcessEventsOption::ProcessUntilQuit);
+    CoreWindow::GetForCurrentThread().Activate();
+    while (true) {
+      CoreWindow::GetForCurrentThread().Dispatcher().ProcessEvents(
+          CoreProcessEventsOption::ProcessAllIfPresent);
+    }
   }
 };
 
