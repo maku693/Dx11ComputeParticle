@@ -4,8 +4,6 @@ using namespace winrt;
 using namespace Windows::ApplicationModel::Core;
 using namespace Windows::ApplicationModel;
 using namespace Windows::UI::Core;
-using namespace Windows::Storage::Streams;
-using namespace Windows::Storage;
 
 class App : public implements<App, IFrameworkViewSource, IFrameworkView> {
 public:
@@ -28,13 +26,12 @@ public:
   }
 
 private:
-  std::vector<uint8_t> ReadFile(const hstring &name) {
-    const auto root = Package::Current().InstalledLocation();
-    const auto file = root.GetFileAsync(name).get();
-    const auto buf = FileIO::ReadBufferAsync(file).get();
-    std::vector<uint8_t> data(buf.Length());
-    DataReader::FromBuffer(buf).ReadBytes(data);
-    return data;
+  std::vector<char> ReadFile(const std::filesystem::path& name) {
+    const auto root = std::filesystem::path{
+        Package::Current().InstalledLocation().Path().c_str()};
+    std::ifstream file{root / name};
+    return std::vector<char>{std::istreambuf_iterator<char>{file},
+                             std::istreambuf_iterator<char>{}};
   }
 
    com_ptr<ID3D11Device> device{};
