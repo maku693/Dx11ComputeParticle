@@ -1,1 +1,3 @@
-float4 main(float4 position : SV_Position) : SV_Target { return position; }
+#include "Vertex.hlsli"
+
+float4 main(Vertex v) : SV_Target { return v.Color; }

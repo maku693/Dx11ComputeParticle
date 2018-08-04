@@ -6,6 +6,11 @@ using namespace Windows::ApplicationModel;
 using namespace Windows::Foundation::Numerics;
 using namespace Windows::UI::Core;
 
+struct Vertex {
+  float4 Position;
+  float4 Color;
+};
+
 class App : public implements<App, IFrameworkViewSource, IFrameworkView> {
 public:
   IFrameworkView CreateView() { return *this; }
@@ -80,21 +85,24 @@ public:
     check_hresult(device->CreatePixelShader(psData.data(), psData.size(),
                                             nullptr, pixelShader.put()));
 
-    D3D11_INPUT_ELEMENT_DESC layout{};
-    layout.SemanticName = "Position";
-    layout.SemanticIndex = 0;
-    layout.Format = DXGI_FORMAT_R32G32B32_FLOAT;
-    layout.AlignedByteOffset = D3D11_APPEND_ALIGNED_ELEMENT;
-    check_hresult(device->CreateInputLayout(&layout, 1, vsData.data(),
-                                            vsData.size(), inputLayout.put()));
+    std::array<D3D11_INPUT_ELEMENT_DESC, 2> elementDescs{{
+        {"SV_Position", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0,
+         D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"Color", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0,
+         D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    }};
+    check_hresult(device->CreateInputLayout(
+        elementDescs.data(), static_cast<UINT>(elementDescs.size()),
+        vsData.data(), vsData.size(), inputLayout.put()));
 
     D3D11_BUFFER_DESC vertexBufferDesc{};
-    vertexBufferDesc.ByteWidth = sizeof(float3) * 3;
+    vertexBufferDesc.ByteWidth = sizeof(Vertex) * 3;
     vertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
     vertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
     D3D11_SUBRESOURCE_DATA vertexBufferData{};
-    std::array<float3, 3> vertices{
-        {{-0.5, -0.5, 0}, {0, 0.5, 0}, {0.5, -0.5, 0}}};
+    std::array<Vertex, 3> vertices{{{{-0.5, -0.5, 0, 1}, {1, 0, 0, 1}},
+                                    {{0, 0.5, 0, 1}, {0, 1, 0, 1}},
+                                    {{0.5, -0.5, 0, 1}, {0, 0, 1, 1}}}};
     vertexBufferData.pSysMem = vertices.data();
     device->CreateBuffer(&vertexBufferDesc, &vertexBufferData,
                          vertexBuffer.put());
@@ -129,7 +137,7 @@ public:
         dsv.get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1, 0);
 
     ID3D11Buffer *pVertexBuffer = vertexBuffer.get();
-    const UINT vertexBufferStride{sizeof(float3)};
+    const UINT vertexBufferStride{sizeof(Vertex)};
     const UINT vertexBufferOffset{0};
     context->IASetVertexBuffers(0, 1, &pVertexBuffer, &vertexBufferStride,
                                 &vertexBufferOffset);

@@ -22,6 +22,9 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Dx11ComputeParticle_TemporaryKey.pfx" />
+    <None Include="Shaders\Vertex.hlsli">
+      <Filter>Shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Assets">

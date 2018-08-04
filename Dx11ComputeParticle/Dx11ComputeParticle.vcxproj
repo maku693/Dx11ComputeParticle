@@ -90,6 +90,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Dx11ComputeParticle_TemporaryKey.pfx" />
+    <None Include="Shaders\Vertex.hlsli" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
