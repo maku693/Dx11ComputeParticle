@@ -7,7 +7,7 @@ using namespace Windows::Foundation::Numerics;
 using namespace Windows::UI::Core;
 
 struct Vertex {
-  float4 Position;
+  float3 Position;
   float4 Color;
 };
 
@@ -86,7 +86,7 @@ public:
                                             nullptr, pixelShader.put()));
 
     std::array<D3D11_INPUT_ELEMENT_DESC, 2> elementDescs{{
-        {"SV_Position", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0,
+        {"SV_Position", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,
          D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"Color", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0,
          D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -100,9 +100,9 @@ public:
     vertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
     vertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
     D3D11_SUBRESOURCE_DATA vertexBufferData{};
-    std::array<Vertex, 3> vertices{{{{-0.5, -0.5, 0, 1}, {1, 0, 0, 1}},
-                                    {{0, 0.5, 0, 1}, {0, 1, 0, 1}},
-                                    {{0.5, -0.5, 0, 1}, {0, 0, 1, 1}}}};
+    std::array<Vertex, 3> vertices{{{{-0.5, -0.5, 0}, {1, 0, 0, 1}},
+                                    {{0, 0.5, 0}, {0, 1, 0, 1}},
+                                    {{0.5, -0.5, 0}, {0, 0, 1, 1}}}};
     vertexBufferData.pSysMem = vertices.data();
     device->CreateBuffer(&vertexBufferDesc, &vertexBufferData,
                          vertexBuffer.put());
@@ -170,6 +170,7 @@ private:
   com_ptr<ID3D11PixelShader> pixelShader{};
   com_ptr<ID3D11InputLayout> inputLayout{};
   com_ptr<ID3D11Buffer> vertexBuffer{};
+  com_ptr<ID3D11Buffer> computeBuffer{};
 };
 
 int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
