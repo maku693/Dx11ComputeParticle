@@ -5,6 +5,7 @@ using namespace Windows::ApplicationModel::Core;
 using namespace Windows::ApplicationModel;
 using namespace Windows::Foundation::Numerics;
 using namespace Windows::UI::Core;
+using namespace Windows::UI::ViewManagement;
 
 struct Vertex {
   float3 Position;
@@ -90,7 +91,7 @@ public:
 
     const auto vsData = ReadFile(L"VS.cso");
     const auto psData = ReadFile(L"PS.cso");
-    const auto csData = ReadFile(L"ParticleCS.cso");
+    const auto csData = ReadFile(L"CS.cso");
 
     check_hresult(device->CreateVertexShader(vsData.data(), vsData.size(),
                                              nullptr, vertexShader.put()));
@@ -101,62 +102,71 @@ public:
     check_hresult(device->CreateComputeShader(csData.data(), csData.size(),
                                               nullptr, computeShader.put()));
 
-    std::array<D3D11_INPUT_ELEMENT_DESC, 2> elementDescs{{
-        {"SV_Position", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,
+    std::array<D3D11_INPUT_ELEMENT_DESC, 3> elementDescs{{
+        {"Center", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,
          D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"Color", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0,
          D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"Position", 0, DXGI_FORMAT_R32G32B32_FLOAT, 1,
+         D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_INSTANCE_DATA, 1},
     }};
     check_hresult(device->CreateInputLayout(
         elementDescs.data(), static_cast<UINT>(elementDescs.size()),
         vsData.data(), vsData.size(), inputLayout.put()));
+
+    D3D11_BUFFER_DESC csStructuredBufferDesc{};
+    csStructuredBufferDesc.ByteWidth = sizeof(Particle) * 1024;
+    csStructuredBufferDesc.StructureByteStride = sizeof(Particle);
+    csStructuredBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+    csStructuredBufferDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+    csStructuredBufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    D3D11_SUBRESOURCE_DATA csStructuredBufferData{};
+    std::array<Particle, 1024> particles{};
+    std::mt19937 mt{};
+    std::uniform_real_distribution<float> dist{-1, 1};
+    const auto rnd = [&mt, &dist]() { return dist(mt); };
+    for (auto &particle : particles) {
+      particle.velocity.x = rnd();
+      particle.velocity.y = rnd();
+      particle.velocity.z = rnd();
+      particle.velocity = normalize(particle.velocity);
+      particle.velocity *= 0.05f;
+    }
+    csStructuredBufferData.pSysMem = particles.data();
+    check_hresult(device->CreateBuffer(&csStructuredBufferDesc,
+                                       &csStructuredBufferData,
+                                       csStructuredBuffer.put()));
+    check_hresult(device->CreateUnorderedAccessView(csStructuredBuffer.get(),
+                                                    nullptr, csUAV.put()));
+
+    D3D11_BUFFER_DESC csConstantBufferDesc{};
+    csConstantBufferDesc.ByteWidth = sizeof(ParticleSettings);
+    csConstantBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+    csConstantBufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    D3D11_SUBRESOURCE_DATA csConstantBufferData{};
+    ParticleSettings particleSettings{1024, 60};
+    csConstantBufferData.pSysMem = &particleSettings;
+    check_hresult(device->CreateBuffer(
+        &csConstantBufferDesc, &csConstantBufferData, csConstantBuffer.put()));
 
     D3D11_BUFFER_DESC vertexBufferDesc{};
     vertexBufferDesc.ByteWidth = sizeof(Vertex) * 3;
     vertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
     vertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
     D3D11_SUBRESOURCE_DATA vertexBufferData{};
-    std::array<Vertex, 3> vertices{{{{-0.5, -0.5, 0}, {1, 0, 0, 1}},
-                                    {{0, 0.5, 0}, {0, 1, 0, 1}},
-                                    {{0.5, -0.5, 0}, {0, 0, 1, 1}}}};
+    std::array<Vertex, 3> vertices{{{{-0.1f, -0.1f, 0}, {1, 0, 0, 1}},
+                                    {{0, 0.1f, 0}, {0, 1, 0, 1}},
+                                    {{0.1f, -0.1f, 0}, {0, 0, 1, 1}}}};
     vertexBufferData.pSysMem = vertices.data();
     check_hresult(device->CreateBuffer(&vertexBufferDesc, &vertexBufferData,
                                        vertexBuffer.put()));
 
-    D3D11_BUFFER_DESC particleCSStructuredBufferDesc{};
-    particleCSStructuredBufferDesc.ByteWidth = sizeof(Particle) * 1024;
-    particleCSStructuredBufferDesc.StructureByteStride = sizeof(Particle);
-    particleCSStructuredBufferDesc.Usage = D3D11_USAGE_DEFAULT;
-    particleCSStructuredBufferDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
-    particleCSStructuredBufferDesc.MiscFlags =
-        D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-    D3D11_SUBRESOURCE_DATA particleCSStructuredBufferData{};
-    std::array<Particle, 1024> particles{};
-    std::mt19937 mt{};
-    std::uniform_real_distribution<float> dist{};
-    const auto rnd = [&mt, &dist] { return dist(mt); };
-    for (auto &particle : particles) {
-      particle.velocity.x = rnd();
-      particle.velocity.y = rnd();
-      particle.velocity.z = rnd();
-    }
-    particleCSStructuredBufferData.pSysMem = particles.data();
-    check_hresult(device->CreateBuffer(&particleCSStructuredBufferDesc,
-                                       &particleCSStructuredBufferData,
-                                       particleCSStructuredBuffer.put()));
-    check_hresult(device->CreateUnorderedAccessView(
-        particleCSStructuredBuffer.get(), nullptr, particleCSUAV.put()));
-
-    D3D11_BUFFER_DESC particleCSConstantBufferDesc{};
-    particleCSConstantBufferDesc.ByteWidth = sizeof(ParticleSettings);
-    particleCSConstantBufferDesc.Usage = D3D11_USAGE_DEFAULT;
-    particleCSConstantBufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    D3D11_SUBRESOURCE_DATA particleCSConstantBufferData{};
-    ParticleSettings particleSettings{1024, 1000};
-    particleCSConstantBufferData.pSysMem = &particleSettings;
-    check_hresult(device->CreateBuffer(&particleCSConstantBufferDesc,
-                                       &particleCSConstantBufferData,
-                                       particleCSConstantBuffer.put()));
+    D3D11_BUFFER_DESC instanceBufferDesc{};
+    instanceBufferDesc.ByteWidth = sizeof(Particle) * 1024;
+    instanceBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+    instanceBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    check_hresult(device->CreateBuffer(&instanceBufferDesc, nullptr,
+                                       instanceBuffer.put()));
   }
 
   void Uninitialize() {}
@@ -171,12 +181,14 @@ public:
   }
 
   void Render() {
-    auto *pParticleCSConstantBuffer = particleCSConstantBuffer.get();
-    context->CSSetConstantBuffers(0, 1, &pParticleCSConstantBuffer);
-    auto *pParticleCSUAV = particleCSUAV.get();
-    context->CSSetUnorderedAccessViews(0, 1, &pParticleCSUAV, nullptr);
+    auto *pCSConstantBuffer = csConstantBuffer.get();
+    context->CSSetConstantBuffers(0, 1, &pCSConstantBuffer);
+    auto *pCSUAV = csUAV.get();
+    context->CSSetUnorderedAccessViews(0, 1, &pCSUAV, nullptr);
     context->CSSetShader(computeShader.get(), nullptr, 0);
     context->Dispatch(1024 / 64, 1, 1);
+
+    context->CopyResource(instanceBuffer.get(), csStructuredBuffer.get());
 
     const auto &windowBounds = CoreWindow::GetForCurrentThread().Bounds();
     D3D11_VIEWPORT viewport{};
@@ -194,18 +206,27 @@ public:
     context->ClearDepthStencilView(
         dsv.get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1, 0);
 
-    ID3D11Buffer *pVertexBuffer = vertexBuffer.get();
-    const UINT vertexBufferStride{sizeof(Vertex)};
-    const UINT vertexBufferOffset{0};
-    context->IASetVertexBuffers(0, 1, &pVertexBuffer, &vertexBufferStride,
-                                &vertexBufferOffset);
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context->IASetInputLayout(inputLayout.get());
-
+    const std::array<ID3D11Buffer *, 2> vertexBuffers{
+        vertexBuffer.get(),
+        instanceBuffer.get(),
+    };
+    const std::array<UINT, 2> vertexBufferStrides{
+        sizeof(Vertex),
+        sizeof(Particle),
+    };
+    const std::array<UINT, 2> vertexBufferOffsets{
+        0,
+        sizeof(unsigned int),
+    };
+    context->IASetVertexBuffers(0, 2, vertexBuffers.data(),
+                                vertexBufferStrides.data(),
+                                vertexBufferOffsets.data());
     context->VSSetShader(vertexShader.get(), nullptr, 0);
     context->PSSetShader(pixelShader.get(), nullptr, 0);
 
-    context->Draw(3, 0);
+    context->DrawInstanced(3, 1024, 0, 0);
 
     check_hresult(swapchain->Present(1, 0));
   }
@@ -229,11 +250,15 @@ private:
   com_ptr<ID3D11ComputeShader> computeShader{};
   com_ptr<ID3D11InputLayout> inputLayout{};
   com_ptr<ID3D11Buffer> vertexBuffer{};
-  com_ptr<ID3D11Buffer> particleCSStructuredBuffer{};
-  com_ptr<ID3D11Buffer> particleCSConstantBuffer{};
-  com_ptr<ID3D11UnorderedAccessView> particleCSUAV{};
+  com_ptr<ID3D11Buffer> instanceBuffer{};
+  com_ptr<ID3D11Buffer> csStructuredBuffer{};
+  com_ptr<ID3D11Buffer> csConstantBuffer{};
+  com_ptr<ID3D11UnorderedAccessView> csUAV{};
 };
 
 int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+  ApplicationView::PreferredLaunchViewSize({640, 480});
+  ApplicationView::PreferredLaunchWindowingMode(
+      ApplicationViewWindowingMode::PreferredLaunchViewSize);
   CoreApplication::Run(App());
 }

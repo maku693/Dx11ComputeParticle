@@ -13,6 +13,7 @@ RWStructuredBuffer<Particle> Particles : register(u0);
 
 void main_(uint3 threadID) {
   if (Particles[threadID.x].age > lifetime) {
+    Particles[threadID.x].age = 0;
     Particles[threadID.x].position = (float3)0;
     return;
   }

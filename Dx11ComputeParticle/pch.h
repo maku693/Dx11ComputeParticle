@@ -15,6 +15,7 @@
 #include <winrt/Windows.Foundation.Numerics.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.UI.Core.h>
+#include <winrt/Windows.UI.ViewManagement.h>
 #include <winrt/base.h>
 
 #include <filesystem>
