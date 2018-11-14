@@ -8,3 +8,5 @@ Debug/
 Generated Files/
 *.pfx
 Packages/
+AppPackages/
+BundleArtifacts/
