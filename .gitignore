@@ -7,3 +7,4 @@ Release/
 Debug/
 Generated Files/
 *.pfx
+Packages/

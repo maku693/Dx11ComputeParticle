@@ -22,6 +22,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Dx11ComputeParticle_TemporaryKey.pfx" />
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Assets">
