@@ -35,13 +35,11 @@ public:
   void Load(const hstring &) {
     const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_0;
     check_hresult(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-                                    D3D11_CREATE_DEVICE_DEBUG, &featureLevel, 1,
-                                    D3D11_SDK_VERSION, device.put(), nullptr,
-                                    context.put()));
+                                    0, &featureLevel, 1, D3D11_SDK_VERSION,
+                                    device.put(), nullptr, context.put()));
 
     com_ptr<IDXGIFactory2> dxgiFactory{};
-    check_hresult(CreateDXGIFactory2(DXGI_CREATE_FACTORY_DEBUG,
-                                     IID_PPV_ARGS(dxgiFactory.put())));
+    check_hresult(CreateDXGIFactory2(0, IID_PPV_ARGS(dxgiFactory.put())));
 
     const auto window = CoreWindow::GetForCurrentThread();
     const auto windowBounds = window.Bounds();
