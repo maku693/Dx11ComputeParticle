@@ -7,6 +7,14 @@ using namespace Windows::Foundation::Numerics;
 using namespace Windows::UI::Core;
 using namespace Windows::UI::ViewManagement;
 
+std::vector<char> readFile(const std::filesystem::path &name) {
+  const auto root = std::filesystem::path{
+      Package::Current().InstalledLocation().Path().c_str()};
+  std::ifstream file{root / name, std::ios::binary};
+  return std::vector<char>{std::istreambuf_iterator<char>{file},
+                           std::istreambuf_iterator<char>{}};
+}
+
 struct Vertex {
   float3 Position;
   float4 Color;
@@ -33,20 +41,130 @@ public:
   void SetWindow(const CoreWindow &) {}
 
   void Load(const hstring &) {
+    const auto windowBounds = CoreWindow::GetForCurrentThread().Bounds();
+    windowWidth = static_cast<UINT>(windowBounds.Width);
+    windowHeight = static_cast<UINT>(windowBounds.Height);
+
+    // Setup particles
+    std::mt19937 mt{};
+    std::uniform_real_distribution<float> dist{-1, 1};
+    const auto rnd = [&mt, &dist]() { return dist(mt); };
+    for (auto &particle : particles) {
+      particle.velocity.x = rnd();
+      particle.velocity.y = rnd();
+      particle.velocity.z = rnd();
+      particle.velocity = normalize(particle.velocity);
+      particle.velocity *= 0.05f;
+    }
+
+    SetupDevice();
+
+    SetupCSUAV();
+    SetupComputeShader();
+    SetupCSConstantBuffer();
+
+    SetupSwapchain();
+    SetupRTV();
+    SetupDSV();
+    SetupRenderingShaders();
+    SetupVertexBuffers();
+  }
+
+  void Uninitialize() {}
+
+  void Run() {
+    CoreWindow::GetForCurrentThread().Activate();
+    while (true) {
+      CoreWindow::GetForCurrentThread().Dispatcher().ProcessEvents(
+          CoreProcessEventsOption::ProcessAllIfPresent);
+
+      Dispatch();
+      CopyResouces();
+      Render();
+    }
+  }
+
+private:
+  static constexpr DXGI_FORMAT swapchainFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+  static constexpr int particleCount = 1024;
+  static constexpr int threadGroupCountX = particleCount / 64;
+
+  UINT windowWidth{};
+  UINT windowHeight{};
+
+  std::array<Particle, particleCount> particles{};
+
+  com_ptr<ID3D11Device> device{};
+  com_ptr<ID3D11DeviceContext> context{};
+
+  com_ptr<ID3D11ComputeShader> computeShader{};
+  com_ptr<ID3D11Buffer> csStructuredBuffer{};
+  com_ptr<ID3D11UnorderedAccessView> csUAV{};
+  com_ptr<ID3D11Buffer> csConstantBuffer{};
+
+  com_ptr<IDXGISwapChain1> swapchain{};
+  com_ptr<ID3D11RenderTargetView> rtv{};
+  com_ptr<ID3D11DepthStencilView> dsv{};
+  com_ptr<ID3D11VertexShader> vertexShader{};
+  com_ptr<ID3D11PixelShader> pixelShader{};
+  com_ptr<ID3D11InputLayout> inputLayout{};
+  com_ptr<ID3D11Buffer> vertexBuffer{};
+  com_ptr<ID3D11Buffer> instanceBuffer{};
+  std::array<ID3D11Buffer *, 2> vertexBuffers;
+  std::array<UINT, 2> vertexBufferStrides;
+  std::array<UINT, 2> vertexBufferOffsets;
+
+  void SetupDevice() {
     const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_0;
     check_hresult(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
                                     0, &featureLevel, 1, D3D11_SDK_VERSION,
                                     device.put(), nullptr, context.put()));
+  }
 
+  void SetupCSUAV() {
+    D3D11_BUFFER_DESC csStructuredBufferDesc{};
+    csStructuredBufferDesc.ByteWidth = sizeof(Particle) * particleCount;
+    csStructuredBufferDesc.StructureByteStride = sizeof(Particle);
+    csStructuredBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+    csStructuredBufferDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+    csStructuredBufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    D3D11_SUBRESOURCE_DATA csStructuredBufferData{};
+    csStructuredBufferData.pSysMem = particles.data();
+    check_hresult(device->CreateBuffer(&csStructuredBufferDesc,
+                                       &csStructuredBufferData,
+                                       csStructuredBuffer.put()));
+    check_hresult(device->CreateUnorderedAccessView(csStructuredBuffer.get(),
+                                                    nullptr, csUAV.put()));
+  }
+
+  void SetupComputeShader() {
+    const auto csData = readFile(L"CS.cso");
+    check_hresult(device->CreateComputeShader(csData.data(), csData.size(),
+                                              nullptr, computeShader.put()));
+  }
+
+  void SetupCSConstantBuffer() {
+    D3D11_BUFFER_DESC csConstantBufferDesc{};
+    csConstantBufferDesc.ByteWidth = sizeof(ParticleSettings);
+    csConstantBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+    csConstantBufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    D3D11_SUBRESOURCE_DATA csConstantBufferData{};
+    ParticleSettings particleSettings{particleCount, 60};
+    csConstantBufferData.pSysMem = &particleSettings;
+    check_hresult(device->CreateBuffer(
+        &csConstantBufferDesc, &csConstantBufferData, csConstantBuffer.put()));
+  }
+
+  void SetupSwapchain() {
     com_ptr<IDXGIFactory2> dxgiFactory{};
     check_hresult(CreateDXGIFactory2(0, IID_PPV_ARGS(dxgiFactory.put())));
 
     const auto window = CoreWindow::GetForCurrentThread();
-    const auto windowBounds = window.Bounds();
+
     DXGI_SWAP_CHAIN_DESC1 swapchainDesc{};
-    swapchainDesc.Width = static_cast<UINT>(windowBounds.Width);
-    swapchainDesc.Height = static_cast<UINT>(windowBounds.Height);
-    swapchainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    swapchainDesc.Width = windowWidth;
+    swapchainDesc.Height = windowHeight;
+    swapchainDesc.Format = swapchainFormat;
     swapchainDesc.SampleDesc.Count = 1;
     swapchainDesc.SampleDesc.Quality = 0;
     swapchainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -57,19 +175,23 @@ public:
     check_hresult(dxgiFactory->CreateSwapChainForCoreWindow(
         device.get(), window.as<IUnknown>().get(), &swapchainDesc, nullptr,
         swapchain.put()));
+  }
 
+  void SetupRTV() {
     com_ptr<ID3D11Texture2D> backBuffer{};
     check_hresult(swapchain->GetBuffer(0, IID_PPV_ARGS(backBuffer.put())));
 
     D3D11_RENDER_TARGET_VIEW_DESC rtvDesc{};
-    rtvDesc.Format = swapchainDesc.Format;
+    rtvDesc.Format = swapchainFormat;
     rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
     check_hresult(
         device->CreateRenderTargetView(backBuffer.get(), &rtvDesc, rtv.put()));
+  }
 
+  void SetupDSV() {
     D3D11_TEXTURE2D_DESC depthBufferDesc{};
-    depthBufferDesc.Width = swapchainDesc.Width;
-    depthBufferDesc.Height = swapchainDesc.Height;
+    depthBufferDesc.Width = windowWidth;
+    depthBufferDesc.Height = windowHeight;
     depthBufferDesc.MipLevels = 1;
     depthBufferDesc.ArraySize = 1;
     depthBufferDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
@@ -86,19 +208,15 @@ public:
     dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
     check_hresult(
         device->CreateDepthStencilView(depthBuffer.get(), &dsvDesc, dsv.put()));
+  }
 
-    const auto vsData = ReadFile(L"VS.cso");
-    const auto psData = ReadFile(L"PS.cso");
-    const auto csData = ReadFile(L"CS.cso");
-
+  void SetupRenderingShaders() {
+    const auto vsData = readFile(L"VS.cso");
+    const auto psData = readFile(L"PS.cso");
     check_hresult(device->CreateVertexShader(vsData.data(), vsData.size(),
                                              nullptr, vertexShader.put()));
-
     check_hresult(device->CreatePixelShader(psData.data(), psData.size(),
                                             nullptr, pixelShader.put()));
-
-    check_hresult(device->CreateComputeShader(csData.data(), csData.size(),
-                                              nullptr, computeShader.put()));
 
     std::array<D3D11_INPUT_ELEMENT_DESC, 3> elementDescs{{
         {"Center", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,
@@ -111,42 +229,9 @@ public:
     check_hresult(device->CreateInputLayout(
         elementDescs.data(), static_cast<UINT>(elementDescs.size()),
         vsData.data(), vsData.size(), inputLayout.put()));
+  }
 
-    D3D11_BUFFER_DESC csStructuredBufferDesc{};
-    csStructuredBufferDesc.ByteWidth = sizeof(Particle) * 1024;
-    csStructuredBufferDesc.StructureByteStride = sizeof(Particle);
-    csStructuredBufferDesc.Usage = D3D11_USAGE_DEFAULT;
-    csStructuredBufferDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
-    csStructuredBufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-    D3D11_SUBRESOURCE_DATA csStructuredBufferData{};
-    std::array<Particle, 1024> particles{};
-    std::mt19937 mt{};
-    std::uniform_real_distribution<float> dist{-1, 1};
-    const auto rnd = [&mt, &dist]() { return dist(mt); };
-    for (auto &particle : particles) {
-      particle.velocity.x = rnd();
-      particle.velocity.y = rnd();
-      particle.velocity.z = rnd();
-      particle.velocity = normalize(particle.velocity);
-      particle.velocity *= 0.05f;
-    }
-    csStructuredBufferData.pSysMem = particles.data();
-    check_hresult(device->CreateBuffer(&csStructuredBufferDesc,
-                                       &csStructuredBufferData,
-                                       csStructuredBuffer.put()));
-    check_hresult(device->CreateUnorderedAccessView(csStructuredBuffer.get(),
-                                                    nullptr, csUAV.put()));
-
-    D3D11_BUFFER_DESC csConstantBufferDesc{};
-    csConstantBufferDesc.ByteWidth = sizeof(ParticleSettings);
-    csConstantBufferDesc.Usage = D3D11_USAGE_DEFAULT;
-    csConstantBufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    D3D11_SUBRESOURCE_DATA csConstantBufferData{};
-    ParticleSettings particleSettings{1024, 60};
-    csConstantBufferData.pSysMem = &particleSettings;
-    check_hresult(device->CreateBuffer(
-        &csConstantBufferDesc, &csConstantBufferData, csConstantBuffer.put()));
-
+  void SetupVertexBuffers() {
     D3D11_BUFFER_DESC vertexBufferDesc{};
     vertexBufferDesc.ByteWidth = sizeof(Vertex) * 3;
     vertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
@@ -160,38 +245,42 @@ public:
                                        vertexBuffer.put()));
 
     D3D11_BUFFER_DESC instanceBufferDesc{};
-    instanceBufferDesc.ByteWidth = sizeof(Particle) * 1024;
+    instanceBufferDesc.ByteWidth = sizeof(Particle) * particleCount;
     instanceBufferDesc.Usage = D3D11_USAGE_DEFAULT;
     instanceBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
     check_hresult(device->CreateBuffer(&instanceBufferDesc, nullptr,
                                        instanceBuffer.put()));
+    vertexBuffers = {
+        vertexBuffer.get(),
+        instanceBuffer.get(),
+    };
+    vertexBufferStrides = {
+        sizeof(Vertex),
+        sizeof(Particle),
+    };
+    vertexBufferOffsets = {
+        0,
+        sizeof(unsigned int), // Skip `age`
+    };
   }
 
-  void Uninitialize() {}
-
-  void Run() {
-    CoreWindow::GetForCurrentThread().Activate();
-    while (true) {
-      CoreWindow::GetForCurrentThread().Dispatcher().ProcessEvents(
-          CoreProcessEventsOption::ProcessAllIfPresent);
-      Render();
-    }
-  }
-
-  void Render() {
+  void Dispatch() {
     auto *pCSConstantBuffer = csConstantBuffer.get();
     context->CSSetConstantBuffers(0, 1, &pCSConstantBuffer);
     auto *pCSUAV = csUAV.get();
     context->CSSetUnorderedAccessViews(0, 1, &pCSUAV, nullptr);
     context->CSSetShader(computeShader.get(), nullptr, 0);
-    context->Dispatch(1024 / 64, 1, 1);
+    context->Dispatch(threadGroupCountX, 1, 1);
+  }
 
+  void CopyResouces() {
     context->CopyResource(instanceBuffer.get(), csStructuredBuffer.get());
+  }
 
-    const auto &windowBounds = CoreWindow::GetForCurrentThread().Bounds();
+  void Render() {
     D3D11_VIEWPORT viewport{};
-    viewport.Width = static_cast<FLOAT>(windowBounds.Width);
-    viewport.Height = static_cast<FLOAT>(windowBounds.Height);
+    viewport.Width = windowWidth;
+    viewport.Height = windowHeight;
     viewport.MaxDepth = 1;
     context->RSSetViewports(1, &viewport);
 
@@ -206,52 +295,16 @@ public:
 
     context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context->IASetInputLayout(inputLayout.get());
-    const std::array<ID3D11Buffer *, 2> vertexBuffers{
-        vertexBuffer.get(),
-        instanceBuffer.get(),
-    };
-    const std::array<UINT, 2> vertexBufferStrides{
-        sizeof(Vertex),
-        sizeof(Particle),
-    };
-    const std::array<UINT, 2> vertexBufferOffsets{
-        0,
-        sizeof(unsigned int),
-    };
-    context->IASetVertexBuffers(0, 2, vertexBuffers.data(),
-                                vertexBufferStrides.data(),
-                                vertexBufferOffsets.data());
+    context->IASetVertexBuffers(
+        0, static_cast<UINT>(vertexBuffers.size()), vertexBuffers.data(),
+        vertexBufferStrides.data(), vertexBufferOffsets.data());
     context->VSSetShader(vertexShader.get(), nullptr, 0);
     context->PSSetShader(pixelShader.get(), nullptr, 0);
 
-    context->DrawInstanced(3, 1024, 0, 0);
+    context->DrawInstanced(3, particleCount, 0, 0);
 
     check_hresult(swapchain->Present(1, 0));
   }
-
-private:
-  std::vector<char> ReadFile(const std::filesystem::path &name) {
-    const auto root = std::filesystem::path{
-        Package::Current().InstalledLocation().Path().c_str()};
-    std::ifstream file{root / name, std::ios::binary};
-    return std::vector<char>{std::istreambuf_iterator<char>{file},
-                             std::istreambuf_iterator<char>{}};
-  }
-
-  com_ptr<ID3D11Device> device{};
-  com_ptr<ID3D11DeviceContext> context{};
-  com_ptr<IDXGISwapChain1> swapchain{};
-  com_ptr<ID3D11RenderTargetView> rtv{};
-  com_ptr<ID3D11DepthStencilView> dsv{};
-  com_ptr<ID3D11VertexShader> vertexShader{};
-  com_ptr<ID3D11PixelShader> pixelShader{};
-  com_ptr<ID3D11ComputeShader> computeShader{};
-  com_ptr<ID3D11InputLayout> inputLayout{};
-  com_ptr<ID3D11Buffer> vertexBuffer{};
-  com_ptr<ID3D11Buffer> instanceBuffer{};
-  com_ptr<ID3D11Buffer> csStructuredBuffer{};
-  com_ptr<ID3D11Buffer> csConstantBuffer{};
-  com_ptr<ID3D11UnorderedAccessView> csUAV{};
 };
 
 int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
